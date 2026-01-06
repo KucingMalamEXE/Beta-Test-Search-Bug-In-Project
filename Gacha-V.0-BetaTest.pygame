@@ -1,0 +1,402 @@
+import pygame
+import random
+import sys
+import time
+
+# Inisialisasi Pygame
+pygame.init()
+
+# Konfigurasi layar
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Gacha System Demo")
+
+# Warna
+BACKGROUND = (20, 20, 35)
+WHITE = (255, 255, 255)
+BLACK = (10, 10, 20)
+GOLD = (255, 215, 0)
+PURPLE = (180, 70, 255)
+BLUE = (70, 130, 255)
+GREEN = (100, 220, 100)
+RED = (255, 80, 80)
+DARK_PURPLE = (80, 0, 120)
+HOVER_PURPLE = (160, 50, 200)
+
+# Font
+try:
+    title_font = pygame.font.SysFont("Arial", 48, bold=True)
+    item_font = pygame.font.SysFont("Arial", 28, bold=True)
+    button_font = pygame.font.SysFont("Arial", 32, bold=True)
+    info_font = pygame.font.SysFont("Arial", 22)
+    rate_font = pygame.font.SysFont("Arial", 20)
+except:
+    # Fallback jika font tidak tersedia
+    title_font = pygame.font.Font(None, 48)
+    item_font = pygame.font.Font(None, 28)
+    button_font = pygame.font.Font(None, 32)
+    info_font = pygame.font.Font(None, 22)
+    rate_font = pygame.font.Font(None, 20)
+
+# Definisi raritas
+RARITIES = [
+    {"name": "Common", "rate": 80.0, "color": GREEN, "weight": 80.0},
+    {"name": "Uncommon", "rate": 15.0, "color": BLUE, "weight": 15.0},
+    {"name": "Rare", "rate": 4.0, "color": PURPLE, "weight": 4.0},
+    {"name": "Epic", "rate": 0.999, "color": GOLD, "weight": 0.999},
+    {"name": "Legendary", "rate": 0.001, "color": RED, "weight": 0.001}
+]
+
+# Generate item pool (55 item total)
+ITEMS = []
+item_id = 1
+
+for i, rarity in enumerate(RARITIES):
+    # Tentukan jumlah item berdasarkan raritas
+    if rarity["name"] == "Common":
+        count = 30
+    elif rarity["name"] == "Uncommon":
+        count = 15
+    elif rarity["name"] == "Rare":
+        count = 7
+    elif rarity["name"] == "Epic":
+        count = 2
+    else:  # Legendary
+        count = 1
+    
+    for j in range(count):
+        ITEMS.append({
+            "id": item_id,
+            "name": f"Item {item_id:02d}",
+            "rarity": rarity["name"],
+            "color": rarity["color"],
+            "rate": rarity["rate"],
+            "weight": rarity["weight"]
+        })
+        item_id += 1
+
+class Button:
+    def __init__(self, x, y, width, height, text, color, hover_color):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.text = text
+        self.color = color
+        self.hover_color = hover_color
+        self.is_hovered = False
+        self.shadow_color = (0, 0, 0, 100)
+        
+    def draw(self, surface):
+        # Draw shadow
+        shadow_rect = pygame.Rect(self.rect.x + 4, self.rect.y + 4, 
+                                  self.rect.width, self.rect.height)
+        pygame.draw.rect(surface, self.shadow_color, shadow_rect, 
+                        border_radius=12, border_top_left_radius=12,
+                        border_top_right_radius=12, border_bottom_left_radius=12,
+                        border_bottom_right_radius=12)
+        
+        # Draw button
+        color = self.hover_color if self.is_hovered else self.color
+        pygame.draw.rect(surface, color, self.rect, border_radius=10)
+        
+        # Border
+        border_color = GOLD if self.is_hovered else WHITE
+        pygame.draw.rect(surface, border_color, self.rect, 3, border_radius=10)
+        
+        # Text
+        text_surf = button_font.render(self.text, True, WHITE)
+        text_rect = text_surf.get_rect(center=self.rect.center)
+        surface.blit(text_surf, text_rect)
+        
+        # Hover effect text
+        if self.is_hovered:
+            glow_surf = button_font.render(self.text, True, (255, 255, 200))
+            surface.blit(glow_surf, text_rect)
+        
+    def update(self, mouse_pos):
+        self.is_hovered = self.rect.collidepoint(mouse_pos)
+        
+    def is_clicked(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            return self.rect.collidepoint(event.pos)
+        return False
+
+class Particle:
+    def __init__(self, x, y, color, size=3, speed=2):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.size = random.randint(size-1, size+2)
+        self.speed_x = random.uniform(-speed, speed)
+        self.speed_y = random.uniform(-speed, speed)
+        self.life = random.randint(20, 40)
+        self.max_life = self.life
+        self.gravity = 0.1
+        
+    def update(self):
+        self.x += self.speed_x
+        self.y += self.speed_y
+        self.speed_y += self.gravity
+        self.life -= 1
+        return self.life > 0
+        
+    def draw(self, surface):
+        alpha = int(255 * (self.life / self.max_life))
+        r, g, b = self.color
+        
+        # Create surface with alpha
+        particle_surf = pygame.Surface((self.size * 2, self.size * 2), pygame.SRCALPHA)
+        pygame.draw.circle(particle_surf, (r, g, b, alpha), 
+                          (self.size, self.size), self.size)
+        surface.blit(particle_surf, (int(self.x - self.size), int(self.y - self.size)))
+
+class GachaSystem:
+    def __init__(self):
+        self.particles = []
+        self.last_result = None
+        self.show_result = False
+        self.animation_start = 0
+        self.pull_count = 0
+        self.pull_history = []
+        
+    def perform_gacha(self):
+        """Perform a single gacha pull"""
+        self.pull_count += 1
+        
+        # Weighted random selection based on rates
+        rand = random.uniform(0, 100)
+        cumulative = 0
+        
+        for rarity in RARITIES:
+            cumulative += rarity["rate"]
+            if rand <= cumulative:
+                selected_rarity = rarity["name"]
+                break
+        
+        # Get all items of selected rarity
+        available_items = [item for item in ITEMS if item["rarity"] == selected_rarity]
+        result = random.choice(available_items)
+        
+        # Add to history (keep last 10)
+        self.pull_history.append(result)
+        if len(self.pull_history) > 10:
+            self.pull_history.pop(0)
+        
+        return result
+    
+    def create_explosion(self, x, y, color, count=25):
+        """Create particle explosion effect"""
+        for _ in range(count):
+            self.particles.append(Particle(x, y, color))
+            
+    def create_sparkles(self, rect, color, count=5):
+        """Create sparkles around a rectangle"""
+        for _ in range(count):
+            x = random.randint(rect.left, rect.right)
+            y = random.randint(rect.top, rect.bottom)
+            self.particles.append(Particle(x, y, color, size=2, speed=1))
+    
+    def update_particles(self):
+        """Update all particles"""
+        self.particles = [p for p in self.particles if p.update()]
+    
+    def draw_particles(self, surface):
+        """Draw all particles"""
+        for particle in self.particles:
+            particle.draw(surface)
+    
+    def draw_result(self, surface, result):
+        """Draw the gacha result"""
+        # Semi-transparent overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        surface.blit(overlay, (0, 0))
+        
+        # Result box with glow
+        box_width, box_height = 350, 250
+        box_x, box_y = WIDTH//2 - box_width//2, HEIGHT//2 - box_height//2
+        result_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+        
+        # Glow effect for rare+ items
+        if result["rarity"] in ["Rare", "Epic", "Legendary"]:
+            glow_size = 20
+            for i in range(glow_size, 0, -1):
+                alpha = int(100 * (i / glow_size))
+                glow_rect = result_rect.inflate(i*2, i*2)
+                glow_surf = pygame.Surface(glow_rect.size, pygame.SRCALPHA)
+                pygame.draw.rect(glow_surf, (*result["color"], alpha), 
+                                glow_surf.get_rect(), border_radius=15+i)
+                surface.blit(glow_surf, glow_rect)
+        
+        # Main box
+        pygame.draw.rect(surface, (30, 30, 45), result_rect, border_radius=15)
+        pygame.draw.rect(surface, result["color"], result_rect, 4, border_radius=15)
+        
+        # Decorative elements
+        pygame.draw.line(surface, result["color"], 
+                        (box_x + 20, box_y + 40), 
+                        (box_x + box_width - 20, box_y + 40), 2)
+        
+        # Item name
+        name_text = item_font.render(result["name"], True, WHITE)
+        surface.blit(name_text, (WIDTH//2 - name_text.get_width()//2, box_y + 60))
+        
+        # Rarity with colored background
+        rarity_bg = pygame.Rect(WIDTH//2 - 80, box_y + 100, 160, 35)
+        pygame.draw.rect(surface, (*result["color"], 100), rarity_bg, border_radius=10)
+        pygame.draw.rect(surface, result["color"], rarity_bg, 2, border_radius=10)
+        
+        rarity_text = button_font.render(result["rarity"], True, WHITE)
+        surface.blit(rarity_text, (WIDTH//2 - rarity_text.get_width()//2, box_y + 105))
+        
+        # ID and Rate
+        id_text = info_font.render(f"ID: #{result['id']:03d}", True, WHITE)
+        surface.blit(id_text, (WIDTH//2 - id_text.get_width()//2, box_y + 150))
+        
+        # Format rate display
+        rate_value = result["rate"]
+        if rate_value < 1:
+            rate_str = f"Rate: {rate_value:.3f}%"
+        else:
+            rate_str = f"Rate: {int(rate_value)}%"
+        
+        rate_text = info_font.render(rate_str, True, WHITE)
+        surface.blit(rate_text, (WIDTH//2 - rate_text.get_width()//2, box_y + 180))
+        
+        # Continue instruction
+        continue_text = rate_font.render("Click anywhere to continue", True, (200, 200, 200))
+        surface.blit(continue_text, (WIDTH//2 - continue_text.get_width()//2, box_y + 220))
+
+def draw_stats(surface, gacha_system):
+    """Draw pull statistics"""
+    stats_y = 140
+    
+    # Total pulls
+    pulls_text = info_font.render(f"Total Pulls: {gacha_system.pull_count}", True, WHITE)
+    surface.blit(pulls_text, (30, stats_y))
+    
+    # Last 10 pulls
+    history_text = info_font.render("Recent Pulls:", True, WHITE)
+    surface.blit(history_text, (30, stats_y + 30))
+    
+    for i, item in enumerate(reversed(gacha_system.pull_history[-5:]), 1):
+        item_text = rate_font.render(f"{item['name']} ({item['rarity'][0]})", True, item['color'])
+        surface.blit(item_text, (40, stats_y + 30 + i * 25))
+
+def main():
+    # Initialize systems
+    gacha = GachaSystem()
+    gacha_button = Button(WIDTH//2 - 120, HEIGHT - 100, 240, 60, 
+                         "PULL GACHA", DARK_PURPLE, HOVER_PURPLE)
+    
+    clock = pygame.time.Clock()
+    running = True
+    
+    while running:
+        current_time = time.time()
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # Event handling
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+                
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_SPACE and not gacha.show_result:
+                    # Spacebar for quick pull
+                    gacha.last_result = gacha.perform_gacha()
+                    gacha.show_result = True
+                    gacha.animation_start = current_time
+                    gacha.create_explosion(WIDTH//2, HEIGHT//2, gacha.last_result["color"])
+            
+            if gacha_button.is_clicked(event) and not gacha.show_result:
+                gacha.last_result = gacha.perform_gacha()
+                gacha.show_result = True
+                gacha.animation_start = current_time
+                gacha.create_explosion(WIDTH//2, HEIGHT//2, gacha.last_result["color"])
+                
+            elif event.type == pygame.MOUSEBUTTONDOWN and gacha.show_result:
+                gacha.show_result = False
+        
+        # Update
+        gacha_button.update(mouse_pos)
+        gacha.update_particles()
+        
+        # Create sparkles for rare+ items during animation
+        if gacha.show_result and gacha.last_result:
+            if gacha.last_result["rarity"] in ["Rare", "Epic", "Legendary"]:
+                if current_time - gacha.animation_start < 3:
+                    result_rect = pygame.Rect(WIDTH//2 - 175, HEIGHT//2 - 125, 350, 250)
+                    gacha.create_sparkles(result_rect, gacha.last_result["color"], 2)
+        
+        # Draw
+        screen.fill(BACKGROUND)
+        
+        # Draw stars in background
+        for i in range(50):
+            x = (i * 7) % WIDTH
+            y = (i * 13) % HEIGHT
+            size = 1 if i % 3 == 0 else 2
+            pygame.draw.circle(screen, (100, 100, 150, 100), (x, y), size)
+        
+        # Title
+        title_text = title_font.render("GACHA SYSTEM", True, GOLD)
+        title_shadow = title_font.render("GACHA SYSTEM", True, (100, 80, 0))
+        screen.blit(title_shadow, (WIDTH//2 - title_text.get_width()//2 + 3, 33))
+        screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 30))
+        
+        # Rates info
+        rates_text = []
+        for rarity in RARITIES:
+            if rarity["rate"] < 1:
+                rate_str = f"{rarity['rate']:.3f}%"
+            else:
+                rate_str = f"{int(rarity['rate'])}%"
+            rates_text.append(f"{rarity['name']}: {rate_str}")
+        
+        rates_display = "  |  ".join(rates_text)
+        rates_surface = rate_font.render(rates_display, True, WHITE)
+        screen.blit(rates_surface, (WIDTH//2 - rates_surface.get_width()//2, 85))
+        
+        # Item pool info
+        pool_text = info_font.render(f"Item Pool: {len(ITEMS)} items total", True, (200, 200, 220))
+        screen.blit(pool_text, (WIDTH//2 - pool_text.get_width()//2, 115))
+        
+        # Draw stats
+        draw_stats(screen, gacha)
+        
+        # Draw button
+        gacha_button.draw(screen)
+        
+        # Draw particles
+        gacha.draw_particles(screen)
+        
+        # Draw result if showing
+        if gacha.show_result and gacha.last_result:
+            gacha.draw_result(screen, gacha.last_result)
+            
+            # Draw animation timer for rare+ items
+            if gacha.last_result["rarity"] in ["Epic", "Legendary"]:
+                if current_time - gacha.animation_start < 2:
+                    flash_alpha = int(255 * abs((current_time - gacha.animation_start) * 2 % 1))
+                    flash_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                    flash_surf.fill((255, 255, 255, flash_alpha))
+                    screen.blit(flash_surf, (0, 0))
+        
+        # Instructions
+        if not gacha.show_result:
+            instr_text = rate_font.render("Press SPACE for quick pull | ESC to exit", True, (150, 150, 150))
+            screen.blit(instr_text, (WIDTH//2 - instr_text.get_width()//2, HEIGHT - 40))
+        
+        # FPS counter (for debugging)
+        # fps_text = rate_font.render(f"FPS: {int(clock.get_fps())}", True, WHITE)
+        # screen.blit(fps_text, (WIDTH - 80, 20))
+        
+        pygame.display.flip()
+        clock.tick(60)
+    
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
